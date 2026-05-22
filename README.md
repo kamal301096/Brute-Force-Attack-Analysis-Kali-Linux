@@ -112,17 +112,154 @@ Completely open firewall detected.
 
 ---
 
-### Task 4 — SSH Brute Force Detection
-Monitored SSH logs to identify
-brute force attack patterns.
+### Task 4 — SSH Brute Force Detection & Mitigation
 
-**Simulation Details:**
-- Tool: Hydra
-- Target: red user account
-- Wordlist: rockyou.txt 134MB
-- Threads: 4 parallel
-- Result: 20 failed attempts logged
-- Outcome: No successful login
+This task demonstrates a full before-and-after analysis of an SSH brute force attack, showing the system's vulnerability without protection and the effectiveness of Fail2Ban as a mitigation control.
+
+---
+
+#### 🔴 Before Mitigation
+
+The SSH service was started with no brute-force protection in place. Hydra was used to launch a dictionary attack using the rockyou.txt wordlist. With nothing blocking repeated attempts, thousands of password tries were sent continuously to the SSH service.
+
+**Step 1 — Start SSH Service**
+
+```bash
+sudo service ssh start
+sudo service ssh status
+```
+
+SSH service started successfully and is confirmed active on port 22.
+
+*Figure 1: SSH service started and confirmed active on port 22*
+
+<img width="871" height="400" alt="Screenshot 2026-05-22 190909" src="https://github.com/user-attachments/assets/3fe0f4bc-3e11-4427-a8c3-9c1bf362dd3f" />
+
+
+---
+
+**Step 2 — Launch Hydra Brute-Force Attack (No Protection)**
+
+```bash
+hydra -l red -P /usr/share/wordlists/rockyou.txt ssh://127.0.0.1 -t 4 -V
+```
+
+Hydra launched 14,344,399 login attempts using 4 parallel threads. With no Fail2Ban active, every attempt reached the SSH service without being blocked or throttled.
+
+*Figure 2: Hydra sending unrestricted brute-force attempts — no protection active*
+
+<img width="1655" height="661" alt="Screenshot 2026-05-22 191027" src="https://github.com/user-attachments/assets/964dcc7b-2c7d-4558-9984-240b019115d1" />
+
+
+---
+
+**Step 3 — Failed Attempts Logged in auth.log**
+
+```bash
+grep "Failed password" /var/log/auth.log | tail -20
+```
+
+The auth.log file recorded a continuous stream of failed password attempts from 127.0.0.1 every 1–3 seconds, confirming the attack was reaching the SSH service with no intervention.
+
+*Figure 3: auth.log showing rapid failed SSH login attempts with no banning*
+
+<img width="949" height="374" alt="Screenshot 2026-05-22 191235" src="https://github.com/user-attachments/assets/b66a6a31-ad7a-4af0-b00a-143dc37552ee" />
+
+
+---
+
+#### 🟢 Applying Mitigation — Installing and Configuring Fail2Ban
+
+**Step 4 — Install Fail2Ban**
+
+```bash
+sudo apt install fail2ban -y
+```
+
+Fail2Ban installed successfully along with its dependency python3-systemd.
+
+*Figure 4: Fail2Ban installed via apt package manager*
+<img width="1665" height="709" alt="Screenshot 2026-05-22 191609" src="https://github.com/user-attachments/assets/d718ef73-3208-4629-b123-b01d64aaefde" />
+
+
+---
+
+**Step 5 — Configure the SSH Jail**
+
+The Fail2Ban SSH jail was configured with the following settings:
+
+```
+[sshd]
+enabled = true
+port = 22
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 600
+findtime = 600
+backend = auto
+ignoreself = false
+```
+
+Setting `ignoreself = false` ensures the loopback address (127.0.0.1) is not exempt from banning, which is critical for this local simulation.
+
+*Figure 5: Fail2Ban SSH jail configuration in nano*
+
+<img width="591" height="424" alt="Screenshot 2026-05-22 200558" src="https://github.com/user-attachments/assets/2acc3a00-46d6-4465-9f39-fa2253bce21d" />
+
+
+---
+
+**Step 6 — Start Fail2Ban and Verify Baseline Status**
+
+```bash
+sudo service fail2ban start
+sudo service fail2ban status
+sudo fail2ban-client status sshd
+```
+
+Fail2Ban started successfully and confirmed active. The initial jail status showed zero failed attempts and no banned IPs, confirming a clean baseline before re-running the attack.
+
+*Figure 6: Fail2Ban service active and running*
+
+<img width="746" height="332" alt="Screenshot 2026-05-22 191710" src="https://github.com/user-attachments/assets/8aefee95-a32b-4d71-8af2-e8637496607e" />
+
+
+*Figure 7: Fail2Ban sshd jail showing 0 failed attempts and empty banned IP list*
+
+<img width="647" height="191" alt="Screenshot 2026-05-22 191852" src="https://github.com/user-attachments/assets/fae0ed3f-8e39-415b-afc6-9e36752f4565" />
+
+
+
+---
+
+#### ✅ After Mitigation
+
+**Step 7 — Re-run Hydra Attack — Blocked and IP Banned**
+
+```bash
+hydra -l red -P /usr/share/wordlists/rockyou.txt ssh://127.0.0.1 -t 4 -V
+sudo fail2ban-client status sshd
+```
+
+When Hydra was launched again, it immediately received a `Connection refused` error instead of attempting passwords. The Fail2Ban jail status confirmed 13 total failed attempts, 1 currently banned IP, and 127.0.0.1 in the banned IP list. The mitigation was fully effective.
+
+*Figure 8: Hydra blocked with Connection refused; Fail2Ban showing 127.0.0.1 banned after 13 failed attempts*
+
+<img width="1655" height="362" alt="Screenshot 2026-05-22 200223" src="https://github.com/user-attachments/assets/2588c8a6-5262-408c-b437-79251eac58a7" />
+
+
+---
+
+**Simulation Summary:**
+
+| | Before Fail2Ban | After Fail2Ban |
+|---|---|---|
+| Hydra result | Unlimited attempts | Connection refused |
+| auth.log | Flooded with failures | Attack stopped |
+| Banned IPs | None | 127.0.0.1 |
+| Total failed attempts | Thousands | 13 (then blocked) |
+| Protection | ❌ None | ✅ Active |
 
 ---
 
@@ -305,7 +442,42 @@ md5sum /home/red/* > baseline.txt
 <img width="512" height="202" alt="Screenshot 2026-05-14 190144" src="https://github.com/user-attachments/assets/a7b53dea-7367-40cf-8697-796210c1b161" />
 
 
-### Task 4 — Brute Force
+### Task 4 — Brute Force & Fail2Ban Mitigation
+
+#### Before Mitigation
+
+*Figure 1: SSH service started and confirmed active on port 22*
+<img width="871" height="400" alt="SSH service started" src="https://github.com/user-attachments/assets/Screenshot_2026-05-22_190909" />
+
+*Figure 2: Hydra sending unrestricted brute-force attempts — no protection active*
+<img width="1655" height="661" alt="Hydra attack no protection" src="https://github.com/user-attachments/assets/Screenshot_2026-05-22_191027" />
+
+*Figure 3: auth.log showing rapid failed SSH login attempts with no banning*
+<img width="949" height="374" alt="auth log failed attempts" src="https://github.com/user-attachments/assets/Screenshot_2026-05-22_191235" />
+
+#### Applying Mitigation
+
+*Figure 4: Fail2Ban installed via apt package manager*
+<img width="1665" height="709" alt="Fail2Ban install" src="https://github.com/user-attachments/assets/Screenshot_2026-05-22_191609" />
+
+*Figure 5: Fail2Ban service active and running*
+<img width="746" height="332" alt="Fail2Ban running" src="https://github.com/user-attachments/assets/Screenshot_2026-05-22_191710" />
+
+*Figure 6: Fail2Ban sshd jail showing 0 failed attempts and empty banned IP list*
+<img width="647" height="191" alt="Fail2Ban baseline status" src="https://github.com/user-attachments/assets/Screenshot_2026-05-22_191852" />
+
+*Figure 7: Fail2Ban SSH jail configuration in nano*
+<img width="591" height="424" alt="Fail2Ban config" src="https://github.com/user-attachments/assets/Screenshot_2026-05-22_200558" />
+
+#### After Mitigation
+
+*Figure 8: Hydra blocked with Connection refused; Fail2Ban showing 127.0.0.1 banned after 13 failed attempts*
+<img width="1655" height="362" alt="After mitigation Hydra blocked" src="https://github.com/user-attachments/assets/Screenshot_2026-05-22_200223" />
+
+---
+
+**Original Task 4 Screenshots:**
+
 <img width="232" height="60" alt="Screenshot 2026-05-14 202125" src="https://github.com/user-attachments/assets/fbe6cd8c-dc13-4ad6-b5cd-889a21fba9a2" />
 
 <img width="745" height="332" alt="Screenshot 2026-05-14 202149" src="https://github.com/user-attachments/assets/b7d07de8-7e79-4452-add2-8f3051cdbbfc" />
